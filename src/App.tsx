@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ExamExport, QuestionRow } from './types';
 import { pickMediaUrl } from './mediaPath';
 import { ExamProgressBar } from './ExamProgressBar';
@@ -75,6 +75,8 @@ export function App() {
   const taknieAnswerStartedRef = useRef(false);
   /** Film zakończony (lub błąd) jeszcze w fazie czytania — po 20 s od razu 15 s na odpowiedź. */
   const videoEndedDuringReadingRef = useRef(false);
+  /** Moment wejścia w fazę playback — ignorujemy „ended” zaraz po przejściu (np. film już na końcu po play). */
+  const playbackPhaseEnteredAtRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   indexRef.current = index;
@@ -241,6 +243,7 @@ export function App() {
         if (videoEndedDuringReadingRef.current) {
           startAnswerPhaseTakNie();
         } else {
+          playbackPhaseEnteredAtRef.current = Date.now();
           setExamPhase('playback');
         }
       } else {
@@ -265,6 +268,32 @@ export function App() {
     return () => clearTimeout(g);
   }, [mode, examGlobalEndsAt]);
 
+  useLayoutEffect(() => {
+    if (examPhase === 'playback') {
+      playbackPhaseEnteredAtRef.current = Date.now();
+    } else {
+      playbackPhaseEnteredAtRef.current = null;
+    }
+  }, [examPhase, index]);
+
+  /** Po wejściu w playback: jeśli film już jest na końcu, odpal odpowiedź po krótkim opóźnieniu (gdy „ended” było zbyt wcześnie i je odrzuciliśmy). */
+  useEffect(() => {
+    if (mode !== 'exam' || examPhase !== 'playback' || !examHasVideo) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const t = window.setTimeout(() => {
+      if (examPhaseRef.current !== 'playback') return;
+      if (v.ended) startAnswerPhaseTakNie();
+    }, 120);
+    return () => clearTimeout(t);
+  }, [mode, examPhase, examHasVideo, index, current?.question.id, startAnswerPhaseTakNie]);
+
+  const canAcceptPlaybackMediaEvent = useCallback(() => {
+    const since = playbackPhaseEnteredAtRef.current;
+    if (since === null) return true;
+    return Date.now() - since >= 80;
+  }, []);
+
   const onExamVideoEnded = useCallback(() => {
     if (mode !== 'exam') return;
     const phase = examPhaseRef.current;
@@ -273,9 +302,10 @@ export function App() {
       return;
     }
     if (phase === 'playback') {
+      if (!canAcceptPlaybackMediaEvent()) return;
       startAnswerPhaseTakNie();
     }
-  }, [mode, startAnswerPhaseTakNie]);
+  }, [mode, startAnswerPhaseTakNie, canAcceptPlaybackMediaEvent]);
 
   const onExamVideoError = useCallback(() => {
     if (mode !== 'exam') return;
@@ -285,9 +315,10 @@ export function App() {
       return;
     }
     if (phase === 'playback') {
+      if (!canAcceptPlaybackMediaEvent()) return;
       startAnswerPhaseTakNie();
     }
-  }, [mode, startAnswerPhaseTakNie]);
+  }, [mode, startAnswerPhaseTakNie, canAcceptPlaybackMediaEvent]);
 
   const submitAnswer = (answer: string) => {
     if (!current) return;
@@ -347,14 +378,22 @@ export function App() {
     mode === 'exam' && examPhase === 'reading' && readingEndsAt !== null
       ? Math.max(0, (readingEndsAt - now) / TAKNIE_READ_MS)
       : 0;
+  const readingLeftMs =
+    mode === 'exam' && examPhase === 'reading' && readingEndsAt !== null
+      ? Math.max(0, readingEndsAt - now)
+      : 0;
   const answerFrac =
     mode === 'exam' && examPhase === 'answer' && answerEndsAt !== null
       ? Math.max(0, (answerEndsAt - now) / TAKNIE_ANSWER_MS)
       : 0;
+  const answerLeftMs =
+    mode === 'exam' && examPhase === 'answer' && answerEndsAt !== null ? Math.max(0, answerEndsAt - now) : 0;
   const abcFrac =
     mode === 'exam' && examPhase === 'abc' && abcEndsAt !== null
       ? Math.max(0, (abcEndsAt - now) / ABC_TOTAL_MS)
       : 0;
+  const abcLeftMs =
+    mode === 'exam' && examPhase === 'abc' && abcEndsAt !== null ? Math.max(0, abcEndsAt - now) : 0;
   const globalFrac = mode === 'exam' ? Math.max(0, examGlobalLeftMs / EXAM_TOTAL_MS) : 0;
 
   if (loadErr) {
@@ -561,7 +600,7 @@ export function App() {
           </span>
           {currentIsYesNo ? (
             <span className="exam-phase">
-              {examPhase === 'reading' && 'Czytanie (20 s) — film z kontrolkami poniżej'}
+              {examPhase === 'reading' && 'Czytanie (20 s)'}
               {examPhase === 'playback' && 'Czekanie na koniec filmu — potem 15 s na odpowiedź'}
               {examPhase === 'answer' && 'Czas na odpowiedź (15 s)'}
             </span>
@@ -569,7 +608,12 @@ export function App() {
             <span className="exam-phase">Czas na odpowiedź (50 s)</span>
           )}
           <div className="global-progress">
-            <ExamProgressBar label="Czas egzaminu (25 min)" remainingFraction={globalFrac} />
+            <ExamProgressBar
+              label="Czas egzaminu (25 min)"
+              remainingFraction={globalFrac}
+              remainingMs={examGlobalLeftMs}
+              totalMs={EXAM_TOTAL_MS}
+            />
           </div>
         </div>
       )}
@@ -582,19 +626,12 @@ export function App() {
         {mode === 'exam' && (
           <>
             {examPhase === 'reading' && currentIsYesNo && readingEndsAt !== null && (
-              <>
-                <ExamProgressBar label="Czytanie pytania (20 s)" remainingFraction={readingFrac} />
-                {examHasVideo ? (
-                  <p className="sub" style={{ marginTop: 0 }}>
-                    Film jest dostępny od razu. Możesz odpowiedzieć TAK/NIE w dowolnym momencie (także przed upływem czasu).
-                    Paski to limity — automatyczne przejście tylko gdy nie wybrałeś odpowiedzi.
-                  </p>
-                ) : (
-                  <p className="sub" style={{ marginTop: 0 }}>
-                    Możesz wybrać TAK/NIE wcześniej — nie musisz czekać na koniec odliczania.
-                  </p>
-                )}
-              </>
+              <ExamProgressBar
+                label="Czytanie pytania (20 s)"
+                remainingFraction={readingFrac}
+                remainingMs={readingLeftMs}
+                totalMs={TAKNIE_READ_MS}
+              />
             )}
             {examPhase === 'playback' && currentIsYesNo && examHasVideo && (
               <p className="sub" style={{ marginTop: 0 }}>
@@ -602,10 +639,20 @@ export function App() {
               </p>
             )}
             {examPhase === 'answer' && currentIsYesNo && answerEndsAt !== null && (
-              <ExamProgressBar label="Odpowiedź TAK / NIE (15 s)" remainingFraction={answerFrac} />
+              <ExamProgressBar
+                label="Odpowiedź TAK / NIE (15 s)"
+                remainingFraction={answerFrac}
+                remainingMs={answerLeftMs}
+                totalMs={TAKNIE_ANSWER_MS}
+              />
             )}
             {examPhase === 'abc' && abcEndsAt !== null && (
-              <ExamProgressBar label="Odpowiedź A / B / C (50 s)" remainingFraction={abcFrac} />
+              <ExamProgressBar
+                label="Odpowiedź A / B / C (50 s)"
+                remainingFraction={abcFrac}
+                remainingMs={abcLeftMs}
+                totalMs={ABC_TOTAL_MS}
+              />
             )}
           </>
         )}
