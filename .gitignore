@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+playwright-auth.json
+.pw-profile/
+.cursor/
+
+# Pliki multimediów przy eksporcie przez MCP (obok JSON: data/<nazwa>.media/)
+data/*.media/
+
+# Lokalny symlink do ciężkiego katalogu mediów (~GB) — nie commituj
+public/exam-all-modules-export.media
