@@ -85,7 +85,7 @@ export function App() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/exam-all-modules-export.json');
+        const res = await fetch(`${import.meta.env.BASE_URL}exam-all-modules-export.json`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as ExamExport;
         if (!cancelled) setData(json);
@@ -362,8 +362,9 @@ export function App() {
       <div className="app">
         <h1>Prawko — lokalnie</h1>
         <p className="err">
-          Nie udało się wczytać danych: {loadErr}. Upewnij się, że w <code>public/</code> są symlinki do{' '}
-          <code>data/exam-all-modules-export.json</code> i folderu mediów.
+          Nie udało się wczytać danych: {loadErr}. Lokalnie: w <code>public/</code> symlink do{' '}
+          <code>data/exam-all-modules-export.json</code>. Na GitHub Pages: plik musi być w buildzie (Vite kopiuje{' '}
+          <code>public/</code>); multimedia są opcjonalne.
         </p>
       </div>
     );

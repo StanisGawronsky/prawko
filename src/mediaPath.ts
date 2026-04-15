@@ -1,8 +1,14 @@
-/** Ścieżki w JSON zaczynają się od `./exam-all-modules-export.media/...` — mapujemy na URL w Vite public. */
+/** Prefiks Vite (`/` lokalnie, `/nazwa-repo/` na GitHub Pages). */
+function assetBase(): string {
+  const b = import.meta.env.BASE_URL;
+  return b.endsWith('/') ? b : `${b}/`;
+}
+
+/** Ścieżki w JSON zaczynają się od `./exam-all-modules-export.media/...` — URL względem `base`. */
 export function toPublicUrl(relative: string | null | undefined): string | null {
   if (!relative) return null;
-  const trimmed = relative.replace(/^\.\//, '');
-  return `/${trimmed}`;
+  const trimmed = relative.replace(/^\.\//, '').replace(/^\//, '');
+  return `${assetBase()}${trimmed}`;
 }
 
 export function pickMediaUrl(row: {
