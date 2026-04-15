@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "media:link": "node scripts/link-media.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

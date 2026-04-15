@@ -24,10 +24,13 @@ jobs:
           node-version: '20'
           cache: npm
 
+      # Statyczne media: przed buildem dodaj pliki do public/ (np. npm run media:link z commitem LFS
+      # w data/exam-all-modules-export.media) i usuń VITE_USE_REMOTE_MEDIA poniżej.
       - name: Install and build
         run: npm ci && npm run build
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_USE_REMOTE_MEDIA: 'true'
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
