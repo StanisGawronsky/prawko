@@ -12,6 +12,16 @@ import {
   TAKNIE_ANSWER_MS,
   TAKNIE_READ_MS,
 } from './examRules';
+import {
+  applyWrongRecord,
+  clearWrongMetricsStorage,
+  countQuestionsWithErrors,
+  findQuestionRowById,
+  getWrongQuestionIdsSorted,
+  loadWrongMetrics,
+  saveWrongMetrics,
+  type WrongMetricsStore,
+} from './wrongMetrics';
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -49,16 +59,38 @@ function isAnswerMatch(pickedAnswer: string | null | undefined, correctAnswer: s
   return normalizeAnswerValue(pickedAnswer) === normalizeAnswerValue(correctAnswer);
 }
 
-function flattenQuestions(data: ExamExport, moduleFilter: 'all' | number): QuestionRow[] {
-  if (moduleFilter === 'all') {
+/** Zakres: cała baza albo posortowany, unikalny podzbiór `moduleId`. */
+type ModuleScope = { kind: 'all' } | { kind: 'subset'; ids: number[] };
+
+function sortUniqueModuleIds(ids: number[]): number[] {
+  return [...new Set(ids)].sort((a, b) => a - b);
+}
+
+function flattenQuestions(data: ExamExport, scope: ModuleScope): QuestionRow[] {
+  if (scope.kind === 'all') {
     const modules = [...data.modules].sort((a, b) => a.moduleId - b.moduleId);
     return modules.flatMap((m) => [...m.questions].sort(byQuestionOrder));
   }
-  const block = data.modules.find((m) => m.moduleId === moduleFilter);
-  return block ? [...block.questions].sort(byQuestionOrder) : [];
+  const sortedIds = sortUniqueModuleIds(scope.ids);
+  return sortedIds.flatMap((id) => {
+    const block = data.modules.find((m) => m.moduleId === id);
+    return block ? [...block.questions].sort(byQuestionOrder) : [];
+  });
 }
 
-type Mode = 'setup' | 'learn' | 'test' | 'examIntro' | 'exam' | 'examResult';
+function formatModuleScopeDescription(scope: ModuleScope): string {
+  if (scope.kind === 'all') return 'wszystkie moduły';
+  const sorted = sortUniqueModuleIds(scope.ids);
+  if (sorted.length === 0) return 'brak wyboru modułów';
+  if (sorted.length <= 8) return `moduły: ${sorted.join(', ')}`;
+  return `moduły: ${sorted.slice(0, 8).join(', ')}… (+${sorted.length - 8})`;
+}
+
+function canStartSession(scope: ModuleScope): boolean {
+  return scope.kind === 'all' || scope.ids.length > 0;
+}
+
+type Mode = 'setup' | 'learn' | 'learnWrong' | 'test' | 'examIntro' | 'exam' | 'examResult';
 
 /** TAK/NIE: czytanie → (film) → odpowiedź. ABC: jeden timer. */
 type ExamPhase = 'reading' | 'playback' | 'answer' | 'abc';
@@ -74,7 +106,7 @@ function formatMs(ms: number): string {
 export function App() {
   const [data, setData] = useState<ExamExport | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [moduleFilter, setModuleFilter] = useState<'all' | number>('all');
+  const [moduleScope, setModuleScope] = useState<ModuleScope>({ kind: 'all' });
   const [mode, setMode] = useState<Mode>('setup');
   const [session, setSession] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
@@ -86,6 +118,7 @@ export function App() {
   const [examPhase, setExamPhase] = useState<ExamPhase>('abc');
   const [examAnswers, setExamAnswers] = useState<Record<number, string>>({});
   const [examTick, setExamTick] = useState(0);
+  const [wrongMetrics, setWrongMetrics] = useState<WrongMetricsStore>({});
   const [readingEndsAt, setReadingEndsAt] = useState<number | null>(null);
   const [answerEndsAt, setAnswerEndsAt] = useState<number | null>(null);
   const [abcEndsAt, setAbcEndsAt] = useState<number | null>(null);
@@ -124,6 +157,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    setWrongMetrics(loadWrongMetrics());
+  }, []);
+
+  useEffect(() => {
     if (mode !== 'exam') return;
     const id = window.setInterval(() => setExamTick((t) => t + 1), 200);
     return () => clearInterval(id);
@@ -142,29 +179,58 @@ export function App() {
 
   const questionCountInScope = useMemo(() => {
     if (!data) return 0;
-    return flattenQuestions(data, moduleFilter).length;
-  }, [data, moduleFilter]);
+    return flattenQuestions(data, moduleScope).length;
+  }, [data, moduleScope]);
+
+  const scopeReady = canStartSession(moduleScope);
+  const subsetIdsForSelect =
+    moduleScope.kind === 'subset' ? sortUniqueModuleIds(moduleScope.ids) : [];
+  const moduleSelectSize = useMemo(() => {
+    const n = moduleOptions.length;
+    if (n <= 0) return 4;
+    return Math.min(12, Math.max(4, n));
+  }, [moduleOptions.length]);
 
   const startLearn = useCallback(() => {
-    if (!data) return;
-    const flat = flattenQuestions(data, moduleFilter);
+    if (!data || !canStartSession(moduleScope)) return;
+    const flat = flattenQuestions(data, moduleScope);
     setSession(flat);
     setIndex(0);
     setPicked(null);
     setTestFinished(false);
     setMode('learn');
-  }, [data, moduleFilter]);
+  }, [data, moduleScope]);
 
   const startTest = useCallback(() => {
-    if (!data) return;
-    const flat = flattenQuestions(data, moduleFilter);
+    if (!data || !canStartSession(moduleScope)) return;
+    const flat = flattenQuestions(data, moduleScope);
     setSession(shuffle(flat));
     setIndex(0);
     setPicked(null);
     setTestAnswers({});
     setTestFinished(false);
     setMode('test');
-  }, [data, moduleFilter]);
+  }, [data, moduleScope]);
+
+  const wrongQuestionCount = useMemo(() => countQuestionsWithErrors(wrongMetrics), [wrongMetrics]);
+
+  const startReviewWrong = useCallback(() => {
+    if (!data) return;
+    const ids = getWrongQuestionIdsSorted(wrongMetrics);
+    const rows = ids.map((id) => findQuestionRowById(data, id)).filter((r): r is QuestionRow => r !== null);
+    if (rows.length === 0) return;
+    setSession(shuffle(rows));
+    setIndex(0);
+    setPicked(null);
+    setTestFinished(false);
+    setMode('learnWrong');
+  }, [data, wrongMetrics]);
+
+  const clearWrongMetricsHandler = useCallback(() => {
+    if (!window.confirm('Wyczyścić wszystkie metryki błędnych odpowiedzi (nauka + egzamin)?')) return;
+    clearWrongMetricsStorage();
+    setWrongMetrics({});
+  }, []);
 
   const goNextExam = useCallback((answer: string | null) => {
     if (examAdvanceLock.current) return;
@@ -174,6 +240,23 @@ export function App() {
       timersRef.current = [];
       const i = indexRef.current;
       const len = sessionRef.current.length;
+      const q = sessionRef.current[i];
+      if (q) {
+        const expected = resolveCorrectAnswer(q.question);
+        if (answer === null) {
+          setWrongMetrics((prev) => {
+            const next = applyWrongRecord(prev, q.question.id, 'exam_timeout');
+            saveWrongMetrics(next);
+            return next;
+          });
+        } else if (!isAnswerMatch(answer, expected)) {
+          setWrongMetrics((prev) => {
+            const next = applyWrongRecord(prev, q.question.id, 'exam_wrong');
+            saveWrongMetrics(next);
+            return next;
+          });
+        }
+      }
       setExamAnswers((prev) => (answer !== null ? { ...prev, [i]: answer } : prev));
       setReadingEndsAt(null);
       setAnswerEndsAt(null);
@@ -204,14 +287,14 @@ export function App() {
   }, [goNextExam]);
 
   const startExam = useCallback(() => {
-    if (!data) return;
-    const flat = flattenQuestions(data, moduleFilter);
+    if (!data || !canStartSession(moduleScope)) return;
+    const flat = flattenQuestions(data, moduleScope);
     setSession(shuffle(flat));
     setIndex(0);
     setExamAnswers({});
     setExamGlobalEndsAt(Date.now() + EXAM_TOTAL_MS);
     setMode('exam');
-  }, [data, moduleFilter]);
+  }, [data, moduleScope]);
 
   const current = session[index];
   const total = session.length;
@@ -345,8 +428,16 @@ export function App() {
 
   const submitAnswer = (answer: string) => {
     if (!current) return;
-    if (mode === 'learn') {
+    if (mode === 'learn' || mode === 'learnWrong') {
       setPicked(answer);
+      const expected = resolveCorrectAnswer(current.question);
+      if (!isAnswerMatch(answer, expected)) {
+        setWrongMetrics((prev) => {
+          const next = applyWrongRecord(prev, current.question.id, 'learn');
+          saveWrongMetrics(next);
+          return next;
+        });
+      }
       return;
     }
     if (mode === 'test') {
@@ -372,8 +463,9 @@ export function App() {
   };
 
   const correct = current ? resolveCorrectAnswer(current.question) : '';
+  const isLearnLike = mode === 'learn' || mode === 'learnWrong';
   const showResult =
-    mode === 'learn' && picked !== null ? true : mode === 'test' && picked !== null;
+    (isLearnLike && picked !== null) || (mode === 'test' && picked !== null);
 
   const testScore = useMemo(() => {
     if (!testFinished || mode !== 'test') return null;
@@ -468,11 +560,10 @@ export function App() {
             </li>
           </ul>
           <p className="sub">
-            Zakres: {moduleFilter === 'all' ? 'wszystkie moduły' : `moduł ${moduleFilter}`} — {questionCountInScope} pytań (losowa
-            kolejność).
+            Zakres: {formatModuleScopeDescription(moduleScope)} — {questionCountInScope} pytań (losowa kolejność).
           </p>
           <div className="toolbar">
-            <button type="button" className="btn" onClick={startExam}>
+            <button type="button" className="btn" onClick={startExam} disabled={!scopeReady}>
               Rozpocznij egzamin
             </button>
             <button type="button" className="btn secondary" onClick={() => setMode('setup')}>
@@ -521,33 +612,71 @@ export function App() {
             (czas, brak cofania, punktacja ważona).
           </p>
           <div className="row">
-            <label className="field">
-              Zakres
+            <div className="field field-modules">
+              <span>Zakres modułów</span>
+              <label className="field-inline-check">
+                <input
+                  type="checkbox"
+                  checked={moduleScope.kind === 'all'}
+                  onChange={(e) => {
+                    if (e.target.checked) setModuleScope({ kind: 'all' });
+                    else setModuleScope({ kind: 'subset', ids: [] });
+                  }}
+                />
+                Pełna baza (wszystkie moduły)
+              </label>
               <select
-                value={moduleFilter === 'all' ? 'all' : String(moduleFilter)}
+                multiple
+                className="select-modules"
+                size={moduleSelectSize}
+                disabled={moduleScope.kind === 'all'}
+                value={subsetIdsForSelect.map(String)}
                 onChange={(e) => {
-                  const v = e.target.value;
-                  setModuleFilter(v === 'all' ? 'all' : Number(v));
+                  const opts = Array.from(e.target.selectedOptions, (o) => Number(o.value));
+                  setModuleScope({ kind: 'subset', ids: sortUniqueModuleIds(opts) });
                 }}
               >
-                <option value="all">Wszystkie moduły</option>
                 {moduleOptions.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.id}. {o.name} ({o.count})
                   </option>
                 ))}
               </select>
-            </label>
+              {moduleScope.kind === 'subset' && (
+                <span className="sub field-hint">
+                  Wybór wielu pozycji: Ctrl lub Cmd + klik (zależnie od przeglądarki i urządzenia).
+                </span>
+              )}
+            </div>
           </div>
+          {moduleScope.kind === 'subset' && moduleScope.ids.length === 0 && (
+            <p className="err scope-warning">Wybierz co najmniej jeden moduł (lista powyżej).</p>
+          )}
           <div className="toolbar">
-            <button type="button" className="btn" onClick={startLearn}>
+            <button type="button" className="btn" onClick={startLearn} disabled={!scopeReady}>
               Nauka
             </button>
-            <button type="button" className="btn secondary" onClick={startTest}>
+            <button type="button" className="btn secondary" onClick={startTest} disabled={!scopeReady}>
               Test (losowa kolejność)
             </button>
-            <button type="button" className="btn secondary" onClick={() => setMode('examIntro')}>
+            <button type="button" className="btn secondary" onClick={() => setMode('examIntro')} disabled={!scopeReady}>
               Egzamin (zasady WORD)
+            </button>
+          </div>
+          <p className="sub" style={{ marginTop: '1rem', marginBottom: '0.5rem' }}>
+            Pytania z zapisanymi błędami (nauka + egzamin): <strong>{wrongQuestionCount}</strong>
+          </p>
+          <div className="toolbar">
+            <button type="button" className="btn secondary" onClick={startReviewWrong} disabled={!data || wrongQuestionCount === 0}>
+              Powtórz błędne
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={clearWrongMetricsHandler}
+              disabled={wrongQuestionCount === 0}
+            >
+              Wyczyść metryki błędów
             </button>
           </div>
         </div>
@@ -643,8 +772,16 @@ export function App() {
         </div>
       )}
       <div className="progress">
-        {mode === 'learn' ? 'Nauka' : mode === 'test' ? 'Test' : mode === 'exam' ? 'Egzamin' : ''} · Pytanie {index + 1} /{' '}
-        {total}
+        {mode === 'learn'
+          ? 'Nauka'
+          : mode === 'learnWrong'
+            ? 'Powtórka błędnych'
+            : mode === 'test'
+              ? 'Test'
+              : mode === 'exam'
+                ? 'Egzamin'
+                : ''}{' '}
+        · Pytanie {index + 1} / {total}
         {current.module?.name ? ` · ${current.module.name}` : ''}
       </div>
       <div className="panel">
@@ -697,7 +834,7 @@ export function App() {
                 key={a}
                 type="button"
                 className={cls}
-                disabled={mode === 'learn' ? picked !== null : mode === 'test' ? picked !== null : false}
+                disabled={isLearnLike ? picked !== null : mode === 'test' ? picked !== null : false}
                 onClick={() => submitAnswer(a)}
               >
                 {a}
@@ -705,7 +842,7 @@ export function App() {
             );
           })}
         </div>
-        {mode === 'learn' && picked !== null && (
+        {isLearnLike && picked !== null && (
           <div className={`feedback ${isAnswerMatch(picked, correct) ? 'ok' : 'bad'}`}>
             {isAnswerMatch(picked, correct) ? 'Poprawnie.' : `Błędnie. Poprawna odpowiedź: ${correct}`}
           </div>
@@ -716,17 +853,17 @@ export function App() {
           </div>
         )}
         <div className="toolbar">
-          {mode === 'learn' && (
+          {isLearnLike && (
             <button type="button" className="btn secondary" onClick={goPrev} disabled={index === 0}>
               Wstecz
             </button>
           )}
-          {(mode === 'learn' || mode === 'test') && (
+          {(isLearnLike || mode === 'test') && (
             <button type="button" className="btn" onClick={goNext} disabled={picked === null}>
               {index + 1 >= total ? (mode === 'test' ? 'Zakończ test' : 'Koniec') : 'Dalej'}
             </button>
           )}
-          {(mode === 'learn' || mode === 'test') && (
+          {(isLearnLike || mode === 'test') && (
             <button type="button" className="btn secondary" onClick={() => setMode('setup')}>
               Menu
             </button>
