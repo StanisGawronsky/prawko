@@ -196,7 +196,7 @@ function AppTitleHeading() {
 export function App() {
   const [data, setData] = useState<ExamExport | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [moduleScope, setModuleScope] = useState<ModuleScope>({ kind: 'all' });
+  const [moduleScope, setModuleScope] = useState<ModuleScope>({ kind: 'subset', ids: [] });
   const [mode, setMode] = useState<Mode>('setup');
   const [session, setSession] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
@@ -282,6 +282,19 @@ export function App() {
       .sort((a, b) => a.id - b.id);
   }, [data]);
 
+  /** Liczba opanowanych pytań w module (wg aktualnej bazy i storage). */
+  const masteredCountByModuleId = useMemo(() => {
+    if (!data) return new Map<number, number>();
+    const map = new Map<number, number>();
+    for (const m of data.modules) {
+      const mid = m.moduleId;
+      const masteredIds = new Set(learnMastered[String(mid)] ?? []);
+      const n = m.questions.filter((row) => masteredIds.has(row.question.id)).length;
+      map.set(mid, n);
+    }
+    return map;
+  }, [data, learnMastered]);
+
   const questionCountInScope = useMemo(() => {
     if (!data) return 0;
     return flattenQuestions(data, moduleScope).length;
@@ -322,13 +335,6 @@ export function App() {
   }, [data, moduleScope]);
 
   const scopeReady = canStartSession(moduleScope);
-  const subsetIdsForSelect =
-    moduleScope.kind === 'subset' ? sortUniqueModuleIds(moduleScope.ids) : [];
-  const moduleSelectSize = useMemo(() => {
-    const n = moduleOptions.length;
-    if (n <= 0) return 4;
-    return Math.min(12, Math.max(4, n));
-  }, [moduleOptions.length]);
 
   const startLearn = useCallback(() => {
     if (!data || !canStartSession(moduleScope)) return;
@@ -403,6 +409,33 @@ export function App() {
       return next;
     });
   }, []);
+
+  const toggleSubsetModule = useCallback(
+    (o: { id: number; name: string; count: number }, nextChecked: boolean) => {
+      if (moduleScope.kind !== 'subset') return;
+      if (!nextChecked) {
+        setModuleScope({ kind: 'subset', ids: moduleScope.ids.filter((x) => x !== o.id) });
+        return;
+      }
+      if (moduleScope.ids.includes(o.id)) return;
+      const mastered = masteredCountByModuleId.get(o.id) ?? 0;
+      const total = o.count;
+      const fullyDone = total > 0 && mastered >= total;
+      if (fullyDone) {
+        const ok = window.confirm(
+          'Ten moduł jest już w całości opanowany. Zresetować postęp modułu i dodać go do zakresu nauki od zera?'
+        );
+        if (!ok) return;
+        setLearnMastered((prev) => {
+          const next = resetMasteredForModules(prev, [o.id]);
+          saveLearnMastered(next);
+          return next;
+        });
+      }
+      setModuleScope({ kind: 'subset', ids: sortUniqueModuleIds([...moduleScope.ids, o.id]) });
+    },
+    [moduleScope, masteredCountByModuleId]
+  );
 
   /** Czyści opanowane tylko dla modułów z aktualnego zakresu (subset lub pełna baza = wszystkie moduły w bazie). */
   const resetLearnProgressForSelectedScope = useCallback(() => {
@@ -1003,27 +1036,45 @@ export function App() {
                 />
                 Pełna baza (wszystkie moduły)
               </label>
-              <select
-                multiple
-                className="select-modules"
-                size={moduleSelectSize}
-                disabled={moduleScope.kind === 'all'}
-                value={subsetIdsForSelect.map(String)}
-                onChange={(e) => {
-                  const opts = Array.from(e.target.selectedOptions, (o) => Number(o.value));
-                  setModuleScope({ kind: 'subset', ids: sortUniqueModuleIds(opts) });
-                }}
+              <div
+                className="module-pick-list"
+                role="group"
+                aria-label="Lista modułów do wyboru"
+                aria-disabled={moduleScope.kind === 'all'}
               >
-                {moduleOptions.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.id}. {o.name} ({o.count})
-                  </option>
-                ))}
-              </select>
+                {moduleOptions.map((o) => {
+                  const mastered = masteredCountByModuleId.get(o.id) ?? 0;
+                  const total = o.count;
+                  const complete = total > 0 && mastered >= total;
+                  const selected =
+                    moduleScope.kind === 'all' || (moduleScope.kind === 'subset' && moduleScope.ids.includes(o.id));
+                  return (
+                    <label
+                      key={o.id}
+                      className={`module-pick-row${selected ? ' module-pick-row--selected' : ''}${moduleScope.kind === 'all' ? ' module-pick-row--locked' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="module-pick-check"
+                        disabled={moduleScope.kind === 'all'}
+                        checked={selected}
+                        onChange={(e) => toggleSubsetModule(o, e.target.checked)}
+                      />
+                      <span className="module-pick-status" aria-hidden>
+                        {complete ? <IconLearnMastered /> : <IconLearnPending />}
+                      </span>
+                      <span className="module-pick-label">
+                        {o.id}. {o.name}{' '}
+                        <span className="module-pick-fraction">
+                          ({mastered}/{total})
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
               {moduleScope.kind === 'subset' && (
-                <span className="sub field-hint">
-                  Wybór wielu pozycji: Ctrl lub Cmd + klik (zależnie od przeglądarki i urządzenia).
-                </span>
+                <span className="sub field-hint">Zaznacz jeden lub więcej modułów (wiele naraz).</span>
               )}
             </div>
           </div>
