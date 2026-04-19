@@ -163,6 +163,7 @@ input[type='number'] {
   width: 100%;
   max-height: min(70vh, 520px);
   max-height: min(70dvh, 520px);
+  margin-bottom: 1.25rem;
   border-radius: 10px;
   overflow: hidden;
   background: #000;
@@ -182,6 +183,48 @@ input[type='number'] {
 .stem {
   font-size: 1.05rem;
   margin: 0.75rem 0 1rem;
+}
+
+.stem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding-top: 0.35rem;
+}
+
+.stem-row .stem {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0.15rem;
+  margin-bottom: 1rem;
+}
+
+.stem-help-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin-top: 0.2rem;
+  margin-inline-end: 0.25rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stem-help-btn:hover {
+  border-color: var(--muted);
+  color: var(--accent);
+}
+
+.stem-help-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .answers {
@@ -377,6 +420,22 @@ input[type='number'] {
   .stem {
     font-size: 1rem;
     margin: 0.65rem 0 0.85rem;
+  }
+
+  .stem-row {
+    gap: 0.75rem;
+    padding-top: 0.25rem;
+    margin-inline-end: 0;
+  }
+
+  .stem-row .stem {
+    margin-top: 0.1rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .stem-help-btn {
+    margin-top: 0.12rem;
+    margin-inline-end: 0.05rem;
   }
 
   .media-box,

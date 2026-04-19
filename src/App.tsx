@@ -103,6 +103,11 @@ function formatMs(ms: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
+function openGoogleSearchForQuestion(text: string): void {
+  const q = encodeURIComponent(text);
+  window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+}
+
 export function App() {
   const [data, setData] = useState<ExamExport | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -818,7 +823,23 @@ export function App() {
             )}
           </>
         )}
-        <p className="stem">{current.question.text}</p>
+        <div className="stem-row">
+          <p className="stem">{current.question.text}</p>
+          <button
+            type="button"
+            className="stem-help-btn"
+            aria-label="Szukaj tego pytania w Google (nowa karta)"
+            title="Szukaj tego pytania w Google (nowa karta)"
+            onClick={() => openGoogleSearchForQuestion(current.question.text)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.75" />
+              <text x="12" y="16.5" textAnchor="middle" fontSize="13" fontWeight="700" fill="currentColor" fontFamily="system-ui, sans-serif">
+                ?
+              </text>
+            </svg>
+          </button>
+        </div>
         {media && <div className="media-box">{renderMedia()}</div>}
         <div className="answers">
           {answers.map((a) => {
