@@ -1014,13 +1014,6 @@ export function App() {
           {data.meta.totalQuestions ?? '—'} pytań · {data.meta.totalModules ?? data.modules.length} modułów
         </p>
         <div className="panel">
-          <p className="sub" style={{ marginTop: 0 }}>
-            W tym zakresie: <strong>{questionCountInScope}</strong> pytań. <strong>Nauka</strong> — stała kolejność, tylko pytania jeszcze nieopanowane; po błędnej odpowiedzi karta wraca na koniec kolejki (rotacja). W zakresie do nauki:{' '}
-            <strong>
-              {learnPendingInScope} / {questionCountInScope}
-            </strong>
-            . <strong>Test</strong> — pytania z podpowiedziami po odpowiedzi.
-          </p>
           {setupLearnMessage && <p className="err">{setupLearnMessage}</p>}
           <div className="row">
             <div className="field field-modules">
