@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ExamExport, QuestionRow } from './types';
+import type { ExamExport, QuestionBody, QuestionRow } from './types';
 import { pickMediaUrl } from './mediaPath';
 import { ExamProgressBar } from './ExamProgressBar';
 import {
@@ -24,6 +24,29 @@ function shuffle<T>(arr: T[]): T[] {
 
 function byQuestionOrder(a: QuestionRow, b: QuestionRow): number {
   return a.questionNumber - b.questionNumber;
+}
+
+function normalizeAnswerValue(value: string | null | undefined): string {
+  return (value ?? '').trim();
+}
+
+function resolveCorrectAnswer(question: QuestionBody): string {
+  const raw = normalizeAnswerValue(question.correct);
+  const letter = raw.toUpperCase();
+  if (letter === 'A' || letter === 'B' || letter === 'C') {
+    const byLetter =
+      letter === 'A' ? question.answerA : letter === 'B' ? question.answerB : question.answerC;
+    const mappedByLetter = normalizeAnswerValue(byLetter);
+    if (mappedByLetter) return mappedByLetter;
+    const idx = letter.charCodeAt(0) - 'A'.charCodeAt(0);
+    const mappedFromPredefined = normalizeAnswerValue(question.predefinedAnswers?.[idx]);
+    if (mappedFromPredefined) return mappedFromPredefined;
+  }
+  return raw;
+}
+
+function isAnswerMatch(pickedAnswer: string | null | undefined, correctAnswer: string): boolean {
+  return normalizeAnswerValue(pickedAnswer) === normalizeAnswerValue(correctAnswer);
 }
 
 function flattenQuestions(data: ExamExport, moduleFilter: 'all' | number): QuestionRow[] {
@@ -348,7 +371,7 @@ export function App() {
     if (index > 0) setIndex((i) => i - 1);
   };
 
-  const correct = current?.question.correct ?? '';
+  const correct = current ? resolveCorrectAnswer(current.question) : '';
   const showResult =
     mode === 'learn' && picked !== null ? true : mode === 'test' && picked !== null;
 
@@ -356,7 +379,8 @@ export function App() {
     if (!testFinished || mode !== 'test') return null;
     let ok = 0;
     session.forEach((q, i) => {
-      if (testAnswers[i] === q.question.correct) ok += 1;
+      const expected = resolveCorrectAnswer(q.question);
+      if (isAnswerMatch(testAnswers[i], expected)) ok += 1;
     });
     return { ok, total: session.length };
   }, [testFinished, mode, session, testAnswers]);
@@ -367,7 +391,8 @@ export function App() {
     let maxPts = 0;
     session.forEach((q, i) => {
       maxPts += q.question.points;
-      if (examAnswers[i] === q.question.correct) earned += q.question.points;
+      const expected = resolveCorrectAnswer(q.question);
+      if (isAnswerMatch(examAnswers[i], expected)) earned += q.question.points;
     });
     const passed = isProportionalPass(earned, maxPts);
     return { earned, maxPts, passed };
@@ -661,7 +686,7 @@ export function App() {
         <div className="answers">
           {answers.map((a) => {
             const isSel = picked === a;
-            const isCor = a === correct;
+            const isCor = isAnswerMatch(a, correct);
             let cls = 'answer-btn';
             if (showResult) {
               if (isCor) cls += ' correct';
@@ -681,13 +706,13 @@ export function App() {
           })}
         </div>
         {mode === 'learn' && picked !== null && (
-          <div className={`feedback ${picked === correct ? 'ok' : 'bad'}`}>
-            {picked === correct ? 'Poprawnie.' : `Błędnie. Poprawna odpowiedź: ${correct}`}
+          <div className={`feedback ${isAnswerMatch(picked, correct) ? 'ok' : 'bad'}`}>
+            {isAnswerMatch(picked, correct) ? 'Poprawnie.' : `Błędnie. Poprawna odpowiedź: ${correct}`}
           </div>
         )}
         {mode === 'test' && picked !== null && (
-          <div className={`feedback ${picked === correct ? 'ok' : 'bad'}`}>
-            {picked === correct ? 'Poprawnie.' : `Błędnie. Poprawna: ${correct}`}
+          <div className={`feedback ${isAnswerMatch(picked, correct) ? 'ok' : 'bad'}`}>
+            {isAnswerMatch(picked, correct) ? 'Poprawnie.' : `Błędnie. Poprawna: ${correct}`}
           </div>
         )}
         <div className="toolbar">
