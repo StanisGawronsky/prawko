@@ -22,6 +22,17 @@ import {
   saveWrongMetrics,
   type WrongMetricsStore,
 } from './wrongMetrics';
+import {
+  isMastered,
+  loadLearnMastered,
+  markMastered,
+  moduleIdsForScope,
+  resetMasteredForModules,
+  saveLearnMastered,
+  toggleMastered,
+  toggleModuleMastered,
+  type LearnMasteredStore,
+} from './learnMastered';
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -108,6 +119,80 @@ function openGoogleSearchForQuestion(text: string): void {
   window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
 }
 
+type SetupScreen = 'main' | 'learnProgress';
+
+function IconLearnMastered() {
+  return (
+    <svg className="learn-status-icon learn-status-icon--ok" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M7 12l3.5 3.5L17 9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconLearnPending() {
+  return (
+    <svg className="learn-status-icon learn-status-icon--pending" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M9 9l6 6M15 9l-6 6" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Oznacz cały moduł jako opanowany (ikona przy częściowym stanie). */
+function IconModuleMarkAll() {
+  return (
+    <svg className="learn-module-toggle-icon learn-module-toggle-icon--mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M5 6h10M5 11h8M5 16h6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path
+        d="M15.5 13.5l1.8 1.8L22 9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Cofnij opanowanie całego modułu (gdy wszystkie już opanowane). */
+function IconModuleClearAll() {
+  return (
+    <svg className="learn-module-toggle-icon learn-module-toggle-icon--clear" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M5 6h10M5 11h8M5 16h6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M17 8l4 4M21 8l-4 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconCarTitle() {
+  return (
+    <svg className="app-title-car" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"
+      />
+    </svg>
+  );
+}
+
+function AppTitleHeading() {
+  return (
+    <h1 className="app-title-heading">
+      <IconCarTitle />
+      Prawko
+    </h1>
+  );
+}
+
 export function App() {
   const [data, setData] = useState<ExamExport | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -124,6 +209,13 @@ export function App() {
   const [examAnswers, setExamAnswers] = useState<Record<number, string>>({});
   const [examTick, setExamTick] = useState(0);
   const [wrongMetrics, setWrongMetrics] = useState<WrongMetricsStore>({});
+  const [learnMastered, setLearnMastered] = useState<LearnMasteredStore>({});
+  /** Zakres modułów z momentu ostatniego startu Nauka — do resetu „tego modułu” w sesji. */
+  const [activeLearnScope, setActiveLearnScope] = useState<ModuleScope | null>(null);
+  const [setupLearnMessage, setSetupLearnMessage] = useState<string | null>(null);
+  const [setupScreen, setSetupScreen] = useState<SetupScreen>('main');
+  /** W widoku postępu nauki: który moduł jest rozwinięty w akordeonie (jeden naraz). */
+  const [learnAccordionOpenModuleId, setLearnAccordionOpenModuleId] = useState<number | null>(null);
   const [readingEndsAt, setReadingEndsAt] = useState<number | null>(null);
   const [answerEndsAt, setAnswerEndsAt] = useState<number | null>(null);
   const [abcEndsAt, setAbcEndsAt] = useState<number | null>(null);
@@ -166,6 +258,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    setLearnMastered(loadLearnMastered());
+  }, []);
+
+  useEffect(() => {
+    setSetupLearnMessage(null);
+  }, [moduleScope]);
+
+  useEffect(() => {
     if (mode !== 'exam') return;
     const id = window.setInterval(() => setExamTick((t) => t + 1), 200);
     return () => clearInterval(id);
@@ -187,6 +287,40 @@ export function App() {
     return flattenQuestions(data, moduleScope).length;
   }, [data, moduleScope]);
 
+  const learnPendingInScope = useMemo(() => {
+    if (!data) return 0;
+    const flat = flattenQuestions(data, moduleScope);
+    return flat.filter((row) => !isMastered(learnMastered, row.module.id, row.question.id)).length;
+  }, [data, moduleScope, learnMastered]);
+
+  const learnMasteredInScope = useMemo(
+    () => Math.max(0, questionCountInScope - learnPendingInScope),
+    [questionCountInScope, learnPendingInScope]
+  );
+
+  const learnPercentInScope = useMemo(() => {
+    if (!questionCountInScope) return 0;
+    return Math.round((100 * learnMasteredInScope) / questionCountInScope);
+  }, [questionCountInScope, learnMasteredInScope]);
+
+  const learnProgressModules = useMemo(() => {
+    if (!data) return [] as { moduleId: number; name: string; rows: QuestionRow[] }[];
+    const flat = flattenQuestions(data, moduleScope);
+    const list: { moduleId: number; name: string; rows: QuestionRow[] }[] = [];
+    const indexById = new Map<number, number>();
+    for (const row of flat) {
+      const id = row.module.id;
+      const idx = indexById.get(id);
+      if (idx === undefined) {
+        indexById.set(id, list.length);
+        list.push({ moduleId: id, name: row.module.name, rows: [row] });
+      } else {
+        list[idx].rows.push(row);
+      }
+    }
+    return list;
+  }, [data, moduleScope]);
+
   const scopeReady = canStartSession(moduleScope);
   const subsetIdsForSelect =
     moduleScope.kind === 'subset' ? sortUniqueModuleIds(moduleScope.ids) : [];
@@ -199,15 +333,25 @@ export function App() {
   const startLearn = useCallback(() => {
     if (!data || !canStartSession(moduleScope)) return;
     const flat = flattenQuestions(data, moduleScope);
-    setSession(flat);
+    const pending = flat.filter((row) => !isMastered(learnMastered, row.module.id, row.question.id));
+    if (pending.length === 0) {
+      setSetupLearnMessage(
+        'W tym zakresie nie ma pytań do nauki (wszystkie są już opanowane). Zresetuj postęp nauki dla zakresu lub całej bazy, aby zacząć od nowa.'
+      );
+      return;
+    }
+    setActiveLearnScope(moduleScope);
+    setSession(pending);
     setIndex(0);
     setPicked(null);
     setTestFinished(false);
+    setSetupLearnMessage(null);
     setMode('learn');
-  }, [data, moduleScope]);
+  }, [data, moduleScope, learnMastered]);
 
   const startTest = useCallback(() => {
     if (!data || !canStartSession(moduleScope)) return;
+    setActiveLearnScope(null);
     const flat = flattenQuestions(data, moduleScope);
     setSession(shuffle(flat));
     setIndex(0);
@@ -221,6 +365,7 @@ export function App() {
 
   const startReviewWrong = useCallback(() => {
     if (!data) return;
+    setActiveLearnScope(null);
     const ids = getWrongQuestionIdsSorted(wrongMetrics);
     const rows = ids.map((id) => findQuestionRowById(data, id)).filter((r): r is QuestionRow => r !== null);
     if (rows.length === 0) return;
@@ -236,6 +381,66 @@ export function App() {
     clearWrongMetricsStorage();
     setWrongMetrics({});
   }, []);
+
+  const exitToSetup = useCallback(() => {
+    setActiveLearnScope(null);
+    setSetupScreen('main');
+    setMode('setup');
+  }, []);
+
+  const toggleLearnQuestionMastered = useCallback((moduleId: number, questionId: number) => {
+    setLearnMastered((prev) => {
+      const next = toggleMastered(prev, moduleId, questionId);
+      saveLearnMastered(next);
+      return next;
+    });
+  }, []);
+
+  const toggleLearnModuleMastered = useCallback((moduleId: number, questionIds: number[]) => {
+    setLearnMastered((prev) => {
+      const next = toggleModuleMastered(prev, moduleId, questionIds);
+      saveLearnMastered(next);
+      return next;
+    });
+  }, []);
+
+  /** Czyści opanowane tylko dla modułów z aktualnego zakresu (subset lub pełna baza = wszystkie moduły w bazie). */
+  const resetLearnProgressForSelectedScope = useCallback(() => {
+    if (!data || !canStartSession(moduleScope)) return;
+    const ids = moduleIdsForScope(data, moduleScope);
+    const scopeDesc =
+      moduleScope.kind === 'all'
+        ? `pełnej bazy (${ids.length} modułów)`
+        : ids.length === 1
+          ? `modułu ${ids[0]}`
+          : `wybranych modułów (${ids.length}): ${ids.join(', ')}`;
+    if (!window.confirm(`Wyzerować postęp nauki (opanowane) dla ${scopeDesc}?`)) return;
+    setLearnMastered((prev) => {
+      const next = resetMasteredForModules(prev, ids);
+      saveLearnMastered(next);
+      return next;
+    });
+  }, [data, moduleScope]);
+
+  const resetSingleModuleProgressInLearn = useCallback(() => {
+    if (!data || mode !== 'learn' || activeLearnScope?.kind !== 'subset' || activeLearnScope.ids.length !== 1) return;
+    const scope = activeLearnScope;
+    const modId = sortUniqueModuleIds(scope.ids)[0];
+    if (!window.confirm(`Wyzerować postęp nauki dla modułu ${modId}? Kolejka zostanie przeładowana.`)) return;
+    let nextStore: LearnMasteredStore | null = null;
+    setLearnMastered((prev) => {
+      nextStore = resetMasteredForModules(prev, [modId]);
+      saveLearnMastered(nextStore);
+      return nextStore;
+    });
+    if (nextStore) {
+      const store = nextStore;
+      const pending = flattenQuestions(data, scope).filter((row) => !isMastered(store, row.module.id, row.question.id));
+      setSession(pending);
+      setIndex(0);
+      setPicked(null);
+    }
+  }, [data, mode, activeLearnScope]);
 
   const goNextExam = useCallback((answer: string | null) => {
     if (examAdvanceLock.current) return;
@@ -293,6 +498,7 @@ export function App() {
 
   const startExam = useCallback(() => {
     if (!data || !canStartSession(moduleScope)) return;
+    setActiveLearnScope(null);
     const flat = flattenQuestions(data, moduleScope);
     setSession(shuffle(flat));
     setIndex(0);
@@ -456,10 +662,50 @@ export function App() {
   };
 
   const goNext = () => {
+    const pickedNow = picked;
     setPicked(null);
+
+    if (mode === 'learn') {
+      if (pickedNow === null || !current) return;
+      const row = session[index];
+      const expected = resolveCorrectAnswer(row.question);
+      const ok = isAnswerMatch(pickedNow, expected);
+      if (ok) {
+        setLearnMastered((prev) => {
+          const next = markMastered(prev, row.module.id, row.question.id);
+          saveLearnMastered(next);
+          return next;
+        });
+        const newSession = session.filter((_, i) => i !== index);
+        if (newSession.length === 0) {
+          setSession([]);
+          setIndex(0);
+          exitToSetup();
+          return;
+        }
+        setSession(newSession);
+        setIndex((i) => Math.min(i, newSession.length - 1));
+        return;
+      }
+      const rotated = [...session.slice(0, index), ...session.slice(index + 1), row];
+      setSession(rotated);
+      return;
+    }
+
+    if (mode === 'learnWrong') {
+      if (index + 1 < total) setIndex((i) => i + 1);
+      else exitToSetup();
+      return;
+    }
+
+    if (mode === 'test') {
+      if (index + 1 < total) setIndex((i) => i + 1);
+      else setTestFinished(true);
+      return;
+    }
+
     if (index + 1 < total) setIndex((i) => i + 1);
-    else if (mode === 'test') setTestFinished(true);
-    else setMode('setup');
+    else exitToSetup();
   };
 
   const goPrev = () => {
@@ -521,7 +767,7 @@ export function App() {
   if (loadErr) {
     return (
       <div className="app">
-        <h1>Prawko — lokalnie</h1>
+        <AppTitleHeading />
         <p className="err">
           Nie udało się wczytać danych: {loadErr}. Lokalnie: w <code>public/</code> symlink do{' '}
           <code>data/exam-all-modules-export.json</code>. Na GitHub Pages: plik musi być w buildzie (Vite kopiuje{' '}
@@ -534,7 +780,7 @@ export function App() {
   if (!data) {
     return (
       <div className="app">
-        <h1>Prawko — lokalnie</h1>
+        <AppTitleHeading />
         <p className="sub">Wczytywanie bazy pytań…</p>
       </div>
     );
@@ -565,13 +811,13 @@ export function App() {
             </li>
           </ul>
           <p className="sub">
-            Zakres: {formatModuleScopeDescription(moduleScope)} — {questionCountInScope} pytań (losowa kolejność).
+            Zakres: {formatModuleScopeDescription(moduleScope)} — {questionCountInScope} pytań.
           </p>
           <div className="toolbar">
             <button type="button" className="btn" onClick={startExam} disabled={!scopeReady}>
               Rozpocznij egzamin
             </button>
-            <button type="button" className="btn secondary" onClick={() => setMode('setup')}>
+            <button type="button" className="btn secondary" onClick={exitToSetup}>
               Wróć
             </button>
           </div>
@@ -595,8 +841,132 @@ export function App() {
           <p className={examScore.passed ? 'feedback ok' : 'feedback bad'}>
             {examScore.passed ? 'Zaliczono (wg proporcjonalnego progu).' : 'Niezaliczone (wg proporcjonalnego progu).'}
           </p>
-          <button type="button" className="btn" onClick={() => setMode('setup')}>
+          <button type="button" className="btn" onClick={exitToSetup}>
             Wróć do menu
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'setup' && setupScreen === 'learnProgress') {
+    return (
+      <div className="app learn-progress-page">
+        <h1>Postęp nauki</h1>
+        <p className="sub learn-progress-lead">
+          Zakres: {formatModuleScopeDescription(moduleScope)} ·{' '}
+          <strong>
+            opanowane: {learnMasteredInScope} / {questionCountInScope}
+          </strong>{' '}
+          ({learnPercentInScope}%)
+        </p>
+
+        <div className="panel learn-progress-detail">
+          <h2 className="learn-progress-h2">Szczegóły</h2>
+          <div className="learn-progress-scroll">
+            {!scopeReady ? (
+              <p className="err">Wybierz co najmniej jeden moduł w menu głównym, aby zobaczyć postęp.</p>
+            ) : (
+              learnProgressModules.map((block) => {
+                const total = block.rows.length;
+                const mastered = block.rows.filter((r) => isMastered(learnMastered, r.module.id, r.question.id)).length;
+                const pct = total ? Math.round((100 * mastered) / total) : 0;
+                const allModuleMastered = total > 0 && mastered === total;
+                const moduleQuestionIds = block.rows.map((r) => r.question.id);
+                const isOpen = learnAccordionOpenModuleId === block.moduleId;
+                const panelId = `learn-mod-panel-${block.moduleId}`;
+                const triggerId = `learn-mod-trigger-${block.moduleId}`;
+                return (
+                  <section key={block.moduleId} className="learn-module-block">
+                    <div className="learn-module-accordion-top">
+                      <button
+                        type="button"
+                        id={triggerId}
+                        className="learn-module-accordion-trigger"
+                        aria-expanded={isOpen}
+                        aria-controls={panelId}
+                        onClick={() =>
+                          setLearnAccordionOpenModuleId((prev) => (prev === block.moduleId ? null : block.moduleId))
+                        }
+                      >
+                        <span className="learn-module-accordion-chevron" aria-hidden>
+                          {isOpen ? '▼' : '▶'}
+                        </span>
+                        <span className="learn-module-accordion-trigger-text">
+                          <span className="learn-module-title">
+                            Moduł {block.moduleId} — {block.name}
+                          </span>
+                          <span className="sub learn-module-stats">
+                            Opanowane: {mastered} / {total} ({pct}%)
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="learn-module-toggle-all-btn"
+                        disabled={total === 0}
+                        onClick={() => toggleLearnModuleMastered(block.moduleId, moduleQuestionIds)}
+                        title={
+                          allModuleMastered
+                            ? 'Cały moduł opanowany — kliknij, aby oznaczyć wszystkie pytania jako do nauki'
+                            : 'Kliknij, aby oznaczyć wszystkie pytania w module jako opanowane'
+                        }
+                        aria-label={
+                          allModuleMastered
+                            ? 'Oznacz wszystkie pytania modułu jako do nauki'
+                            : 'Oznacz wszystkie pytania modułu jako opanowane'
+                        }
+                      >
+                        {allModuleMastered ? <IconModuleClearAll /> : <IconModuleMarkAll />}
+                      </button>
+                    </div>
+                    {isOpen ? (
+                      <div id={panelId} className="learn-module-panel" role="region" aria-labelledby={triggerId}>
+                        <ul className="learn-question-list">
+                          {block.rows.map((row) => {
+                            const done = isMastered(learnMastered, row.module.id, row.question.id);
+                            const preview =
+                              row.question.text.length > 140 ? `${row.question.text.slice(0, 140)}…` : row.question.text;
+                            return (
+                              <li key={row.question.id} className="learn-question-item">
+                                <button
+                                  type="button"
+                                  className="learn-question-row"
+                                  aria-pressed={done}
+                                  title={`${row.question.text} — kliknij, aby ${done ? 'oznaczyć jako do nauki' : 'oznaczyć jako opanowane'}.`}
+                                  onClick={() => toggleLearnQuestionMastered(row.module.id, row.question.id)}
+                                >
+                                  <span className="learn-question-icon" aria-hidden>
+                                    {done ? <IconLearnMastered /> : <IconLearnPending />}
+                                  </span>
+                                  <span className="learn-question-num">#{row.questionNumber}</span>
+                                  <span className="learn-question-text">{preview}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="toolbar learn-progress-toolbar">
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={resetLearnProgressForSelectedScope}
+            disabled={!scopeReady}
+            title="Czyści opanowanie dla wszystkich modułów z aktualnego zakresu (tego wybranego w menu głównym)."
+          >
+            Resetuj wszystkie
+          </button>
+          <button type="button" className="btn" onClick={() => setSetupScreen('main')}>
+            Wróć do menu głównego
           </button>
         </div>
       </div>
@@ -606,16 +976,19 @@ export function App() {
   if (mode === 'setup') {
     return (
       <div className="app">
-        <h1>Prawko — nauka lokalna</h1>
+        <AppTitleHeading />
         <p className="sub">
           {data.meta.totalQuestions ?? '—'} pytań · {data.meta.totalModules ?? data.modules.length} modułów
         </p>
         <div className="panel">
           <p className="sub" style={{ marginTop: 0 }}>
-            W tym zakresie: <strong>{questionCountInScope}</strong> pytań. <strong>Nauka</strong> — stała kolejność.{' '}
-            <strong>Test</strong> — wszystkie pytania losowo, z podpowiedziami. <strong>Egzamin</strong> — zasady jak na egzaminie
-            (czas, brak cofania, punktacja ważona).
+            W tym zakresie: <strong>{questionCountInScope}</strong> pytań. <strong>Nauka</strong> — stała kolejność, tylko pytania jeszcze nieopanowane; po błędnej odpowiedzi karta wraca na koniec kolejki (rotacja). W zakresie do nauki:{' '}
+            <strong>
+              {learnPendingInScope} / {questionCountInScope}
+            </strong>
+            . <strong>Test</strong> — pytania z podpowiedziami po odpowiedzi.
           </p>
+          {setupLearnMessage && <p className="err">{setupLearnMessage}</p>}
           <div className="row">
             <div className="field field-modules">
               <span>Zakres modułów</span>
@@ -662,10 +1035,20 @@ export function App() {
               Nauka
             </button>
             <button type="button" className="btn secondary" onClick={startTest} disabled={!scopeReady}>
-              Test (losowa kolejność)
+              Test
             </button>
-            <button type="button" className="btn secondary" onClick={() => setMode('examIntro')} disabled={!scopeReady}>
-              Egzamin (zasady WORD)
+          </div>
+          <div className="toolbar">
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => {
+                setLearnAccordionOpenModuleId(learnProgressModules[0]?.moduleId ?? null);
+                setSetupScreen('learnProgress');
+              }}
+              disabled={!scopeReady}
+            >
+              Postęp nauki — sprawdź ({learnPercentInScope}%)
             </button>
           </div>
           <p className="sub" style={{ marginTop: '1rem', marginBottom: '0.5rem' }}>
@@ -700,7 +1083,7 @@ export function App() {
           <p className="sub">
             {testScore.total ? `${Math.round((100 * testScore.ok) / testScore.total)}%` : '—'}
           </p>
-          <button type="button" className="btn" onClick={() => setMode('setup')}>
+          <button type="button" className="btn" onClick={exitToSetup}>
             Wróć do menu
           </button>
         </div>
@@ -709,10 +1092,15 @@ export function App() {
   }
 
   if (!current) {
+    const learnQueueEmpty = mode === 'learn' && session.length === 0;
     return (
       <div className="app">
-        <p className="err">Brak pytań w wybranym zakresie.</p>
-        <button type="button" className="btn" onClick={() => setMode('setup')}>
+        <p className="err">
+          {learnQueueEmpty
+            ? 'Brak pytań w kolejce nauki. Wróć do menu lub zresetuj postęp nauki dla zakresu.'
+            : 'Brak pytań w wybranym zakresie.'}
+        </p>
+        <button type="button" className="btn" onClick={exitToSetup}>
           Menu
         </button>
       </div>
@@ -885,16 +1273,28 @@ export function App() {
             </button>
           )}
           {(isLearnLike || mode === 'test') && (
-            <button type="button" className="btn secondary" onClick={() => setMode('setup')}>
+            <button type="button" className="btn secondary" onClick={exitToSetup}>
               Menu
             </button>
           )}
+          {mode === 'learn' &&
+            activeLearnScope?.kind === 'subset' &&
+            sortUniqueModuleIds(activeLearnScope.ids).length === 1 && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={resetSingleModuleProgressInLearn}
+                title="Wyzeruj opanowane pytania w tym module i przeładuj kolejkę nauki"
+              >
+                Reset modułu
+              </button>
+            )}
           {mode === 'exam' && (
             <button
               type="button"
               className="btn secondary"
               onClick={() => {
-                if (window.confirm('Przerwać egzamin i wrócić do menu?')) setMode('setup');
+                if (window.confirm('Przerwać egzamin i wrócić do menu?')) exitToSetup();
               }}
             >
               Przerwij egzamin
