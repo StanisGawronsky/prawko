@@ -13,7 +13,12 @@ export function isYesNoQuestion(predefined: string[], answerA: string, answerB: 
   const c = (answerC || '').trim();
   if (a || b || c) return false;
   const p = predefined.map((x) => x.trim().toUpperCase());
-  return p.length === 2 && p.includes('TAK') && p.includes('NIE');
+  if (p.length !== 2) return false;
+  const set = new Set(p);
+  return (
+    (set.has('TAK') && set.has('NIE')) ||
+    (set.has('YES') && set.has('NO'))
+  );
 }
 
 /** Próg zaliczenia przy dowolnej puli punktów (proporcja jak 68/74). */

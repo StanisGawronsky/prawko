@@ -10,3 +10,6 @@ data/*.media/
 
 # Lokalny symlink do ciężkiego katalogu mediów (~GB) — nie commituj
 public/exam-all-modules-export.media
+
+# Cache tłumaczeń EN (regenerowalny: npm run build:en-export)
+data/translation-cache.en.json

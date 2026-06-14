@@ -6,16 +6,20 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "media:link": "node scripts/link-media.mjs"
+    "media:link": "node scripts/link-media.mjs",
+    "build:en-export": "node scripts/build-en-export.mjs"
   },
   "dependencies": {
+    "driver.js": "^1.4.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.17.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "google-translate-api-x": "^10.7.3",
     "typescript": "~5.6.2",
     "vite": "^5.4.11"
   }
